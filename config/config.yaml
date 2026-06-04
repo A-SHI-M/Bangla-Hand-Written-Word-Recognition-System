@@ -1,0 +1,12 @@
+artifacts_root: artifacts
+
+model_trainer:
+  root_dir: artifacts/model_trainer
+  trained_model_path: artifacts/model_trainer/model.keras
+  labels_path: artifacts/model_trainer/labels.json
+
+data_ingestion:
+  root_dir: artifacts/data_ingestion
+  source_dir: Dataset/BanglaLekha-Isolated/Images
+  train_preprocessed_dir: artifacts/data_ingestion/preprocessed/train
+  test_preprocessed_dir: artifacts/data_ingestion/preprocessed/test
