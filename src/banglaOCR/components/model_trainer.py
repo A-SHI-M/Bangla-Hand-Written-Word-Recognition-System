@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import mlflow
 import mlflow.tensorflow
@@ -9,9 +10,22 @@ from banglaOCR import logger
 from banglaOCR.entity import ModelTrainerConfig
 
 
+class EpochStateCallback(tf.keras.callbacks.Callback):
+    """Saves completed epoch count to disk after every epoch so training can resume."""
+
+    def __init__(self, state_path: Path):
+        super().__init__()
+        self.state_path = state_path
+
+    def on_epoch_end(self, epoch, logs=None):
+        with open(self.state_path, "w") as f:
+            json.dump({"completed_epochs": epoch + 1}, f)
+
+
 class ModelTrainer:
     def __init__(self, config: ModelTrainerConfig):
         self.config = config
+        self.state_path = Path(self.config.root_dir) / "training_state.json"
 
     def build_model(self) -> tf.keras.Model:
         inputs = tf.keras.Input(shape=(self.config.image_size, self.config.image_size, 1))
@@ -53,6 +67,20 @@ class ModelTrainer:
 
         return tf.keras.Model(inputs, outputs, name="bangla_ocr_cnn")
 
+    def get_model_and_initial_epoch(self) -> tuple[tf.keras.Model, int]:
+        model_path = Path(self.config.trained_model_path)
+
+        if model_path.exists() and self.state_path.exists():
+            with open(self.state_path) as f:
+                state = json.load(f)
+            initial_epoch = state["completed_epochs"]
+            model = tf.keras.models.load_model(str(model_path))
+            logger.info(f"Resuming training from epoch {initial_epoch + 1}")
+            return model, initial_epoch
+
+        logger.info("Starting training from scratch")
+        return self.build_model(), 0
+
     def get_data_loaders(self):
         AUTOTUNE = tf.data.AUTOTUNE
         normalize = layers.Rescaling(1.0 / 255)
@@ -73,17 +101,21 @@ class ModelTrainer:
             shuffle=False,
         )
 
+        class_names = train_ds.class_names
+
         train_ds = train_ds.map(lambda x, y: (normalize(x), y), num_parallel_calls=AUTOTUNE)
         test_ds = test_ds.map(lambda x, y: (normalize(x), y), num_parallel_calls=AUTOTUNE)
 
         train_ds = train_ds.cache().shuffle(1000).prefetch(AUTOTUNE)
         test_ds = test_ds.cache().prefetch(AUTOTUNE)
 
-        return train_ds, test_ds
+        return train_ds, test_ds, class_names
 
     def train(self):
-        model = self.build_model()
-        model.summary(print_fn=logger.info)
+        model, initial_epoch = self.get_model_and_initial_epoch()
+
+        if initial_epoch == 0:
+            model.summary(print_fn=logger.info)
 
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate),
@@ -103,9 +135,20 @@ class ModelTrainer:
                 monitor="val_accuracy",
                 save_best_only=True,
             ),
+            EpochStateCallback(self.state_path),
         ]
 
-        train_ds, test_ds = self.get_data_loaders()
+        train_ds, test_ds, class_names = self.get_data_loaders()
+
+        # Save labels.json immediately — independent of training or MLflow outcome
+        label_map = {str(i): name for i, name in enumerate(class_names)}
+        with open(self.config.labels_path, "w") as f:
+            json.dump(label_map, f, indent=4)
+        logger.info(f"Label mapping saved to {self.config.labels_path}")
+
+        if initial_epoch >= self.config.epochs:
+            logger.info("Training already complete — no additional epochs to run.")
+            return None
 
         mlflow.set_experiment("bangla-ocr-cnn")
 
@@ -116,13 +159,15 @@ class ModelTrainer:
                 "epochs": self.config.epochs,
                 "learning_rate": self.config.learning_rate,
                 "num_classes": self.config.num_classes,
+                "initial_epoch": initial_epoch,
             })
 
-            logger.info("Starting model training...")
+            logger.info(f"Training from epoch {initial_epoch + 1} to {self.config.epochs}...")
             history = model.fit(
                 train_ds,
                 validation_data=test_ds,
                 epochs=self.config.epochs,
+                initial_epoch=initial_epoch,
                 callbacks=callbacks,
             )
 
@@ -134,7 +179,7 @@ class ModelTrainer:
             )):
                 mlflow.log_metrics(
                     {"loss": loss, "accuracy": acc, "val_loss": val_loss, "val_accuracy": val_acc},
-                    step=epoch,
+                    step=initial_epoch + epoch,
                 )
 
             best_val_acc = max(history.history["val_accuracy"])
@@ -145,12 +190,5 @@ class ModelTrainer:
             mlflow.log_artifact(str(self.config.labels_path))
 
             logger.info(f"MLflow run logged — best val_accuracy: {best_val_acc:.4f}")
-
-        logger.info(f"Best model saved to {self.config.trained_model_path}")
-
-        label_map = {str(i): name for i, name in enumerate(train_ds.class_names)}
-        with open(self.config.labels_path, "w") as f:
-            json.dump(label_map, f, indent=4)
-        logger.info(f"Label mapping saved to {self.config.labels_path}")
 
         return history
