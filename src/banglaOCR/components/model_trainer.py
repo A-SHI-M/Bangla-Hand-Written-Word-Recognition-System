@@ -11,7 +11,6 @@ from banglaOCR.entity import ModelTrainerConfig
 
 
 class EpochStateCallback(tf.keras.callbacks.Callback):
-    """Saves completed epoch count to disk after every epoch so training can resume."""
 
     def __init__(self, state_path: Path):
         super().__init__()
@@ -140,7 +139,7 @@ class ModelTrainer:
 
         train_ds, test_ds, class_names = self.get_data_loaders()
 
-        # Save labels.json immediately — independent of training or MLflow outcome
+    
         label_map = {str(i): name for i, name in enumerate(class_names)}
         with open(self.config.labels_path, "w") as f:
             json.dump(label_map, f, indent=4)
