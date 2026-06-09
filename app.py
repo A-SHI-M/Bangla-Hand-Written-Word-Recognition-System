@@ -9,9 +9,9 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 
 
-MODEL_PATH = "artifacts/model_trainer/model.keras"
-LABELS_PATH = "artifacts/model_trainer/labels.json"
-TRAIN_DIR = Path("artifacts/data_ingestion/preprocessed/train")
+MODEL_PATH = "required/model.keras"
+LABELS_PATH = "required/labels.json"
+TRAIN_DIR = Path("required/sample")
 IMAGE_SIZE = 32
 
 

@@ -17,13 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---- python deps ----
 COPY requirements.txt ./
 RUN pip install --upgrade pip \
-    && grep -v "^\-e" requirements.txt | pip install -r /dev/stdin
+    && sed '/^-e /d' requirements.txt | pip install -r /dev/stdin
 
 # ---- application + model artifacts ----
 COPY app.py ./
-COPY artifacts/model_trainer/model.keras ./artifacts/model_trainer/model.keras
-COPY artifacts/model_trainer/labels.json ./artifacts/model_trainer/labels.json
-COPY artifacts/data_ingestion/preprocessed/ ./artifacts/data_ingestion/preprocessed/
+COPY required/ ./required/
 
 EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s \
